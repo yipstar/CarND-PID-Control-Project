@@ -34,9 +34,24 @@ int main()
 
   PID pid;
   // TODO: Initialize the pid variable.
-  pid.Init(0.71769, 0.00411344, 0.974954);
+  // The car drives well around the track with this initial parameter of 1, 0, 0. at throttle .1
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  // followed wikipedia tuning section, raised Kp from 1 to 2 to get oscialliton. Then tried values for Kd starting at 1 which caused overshooting and lowered till very small values started working. Then tried Ki values from .5 up to correct overshooting. settled on the values below.
+
+  // pid.Init(1, 0, 0);
+  pid.Init(1, .001, 2);
+
+  PID speedPid;
+  // speedPid.Init(.125, .0001, 0.797906);
+  speedPid.Init(1, 0, 0);
+
+  bool use_speed_pid;
+  use_speed_pid = false;
+
+  double target_speed;
+  target_speed = 0.3;
+
+  h.onMessage([&pid, &speedPid, &target_speed, &use_speed_pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -53,7 +68,8 @@ int main()
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
           double steer_value;
 
-          // steer_value = deg2rad(angle);
+          double speed_value;
+          double speed_cte;
 
           // std::cout << "FROM SIM, CTE: " << cte << " Speed: " << speed << " Angle: " << angle << " in radians: " << steer_value << std::endl;
 
@@ -76,26 +92,43 @@ int main()
             steer_value = 1;
           }
 
-          // double totalError = pid.TotalError();
-
-          // std::cout << "total Error: " << totalError << std::endl;
-
-          // steer_value = -pid.TotalError();
-          // steer_value = std::max(std::min(1.0, steer_value), -1.0);
-
           // DEBUG
           std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
 
+          if (use_speed_pid) {
+
+            speed_cte = speed - target_speed;
+
+            speedPid.UpdateError(speed_cte);
+            speed_value = speedPid.GetOutput();
+
+            std::cout << "Speed CTE: " << speed_cte << " Speed Value: " << speed_value << std::endl;
+
+            if (speed_value < .1) {
+              speed_value = .1;
+            }
+
+            if (speed_value > .2) {
+              speed_value = .2;
+            }
+          } else {
+
+            // slow down when steering
+            if (steer_value > .4 || steer_value < -.4) {
+              speed_value = 0.1;
+            } else if (steer_value > .2 || steer_value < -.2) {
+              speed_value = 0.15;
+            } else {
+              speed_value = 0.2;
+            }
+
+            // hardcode to slow single speed for initial parameter tuning
+            // speed_value = .1;
+          }
+
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-
-          // slow down when a high CTE exists
-          // TODO: use abs
-          if (cte > .4 || cte < -.4) {
-            msgJson["throttle"] = 0.1;
-          } else {
-            msgJson["throttle"] = 0.2;
-          }
+          msgJson["throttle"] = speed_value;
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
